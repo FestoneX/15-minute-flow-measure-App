@@ -1,0 +1,6 @@
+{
+  "name": "FlowState - 15m Logger",
+  "description": "A snappy, Toggl-inspired time tracker focusing on 15-minute intervals with chat-like input and local persistence.",
+  "permissions": [],
+  "requestFramePermissions": []
+}
