@@ -107,13 +107,17 @@ export const InputBar: React.FC<Props> = ({
 
 
   const updateSuggestions = (query: string) => {
-    // Safety check
     const safeQuery = query || '';
+    // If empty query, show top weighted suggestions
     if (!safeQuery.trim()) {
+      // We need a way to get suggestions. The prop `recentTags` is passed from parent. 
+      // Ideally parent should pass weighted tags.
+      // For now, let's filter the PASSED recentTags (which we'll assume will be updated in App.tsx to be weighted)
       setSuggestions(recentTags.slice(0, 8));
       return;
     }
     const lower = safeQuery.toLowerCase();
+    // Filter the weighted list
     const filtered = recentTags.filter(t => t.toLowerCase().includes(lower));
     setSuggestions(filtered.slice(0, 8));
   };
@@ -126,38 +130,85 @@ export const InputBar: React.FC<Props> = ({
     }
   }, [text, isFocused, recentTags]);
 
+  // BULK PASTE LOGIC
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const pasteText = e.clipboardData.getData('text');
+    if (pasteText.includes('\n')) {
+      e.preventDefault();
+      // It's a list!
+      const lines = pasteText.split('\n').map(l => l.trim()).filter(l => l);
+      if (lines.length > 1) {
+        // We need to signal parent to handle bulk add.
+        // For simplicity, we'll alert the user or try to handle it.
+        // PROPOSAL: Since Props doesn't have onBulkSubmit, we can iterate and call onSubmit multiple times?
+        // No, onSubmit expects single category.
+        // Let's just create a quick visual confirmation?
+        // Better: We should add `onBulkSubmit` to props, but `onSubmit` is usually tied to state.
+        // Let's allow `onSubmit` to optionally take an array? No, simpler:
+        // Detect multiline in standard text change?
+        // Let's just allow the user to confirm.
+
+        // Actually, requirement is "allow users to paste a multi-line list... automatically populates consecutive".
+        // We will call onSubmit for the FIRST item, and we need a way to pass the rest.
+        // Since we can't easily change the interface right now without touching App.tsx, let's inject a special "BULK:" signal or add a prop.
+        // Let's add a `onBulkSubmit` prop to InputBar. But first let's just make it work by passing the raw text if it has newlines?
+        // No, `handleLogSubmit` in App.tsx takes text. We can handle splitting THERE.
+      }
+    }
+  };
+
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!text.trim() && !activeCategory) return;
 
     let description = text.trim();
-    let categoryName = activeCategory ? activeCategory.name : undefined;
 
-    // If text matches a category name exactly, use it
-    if (!categoryName) {
-      const strictMatch = categories.find(c => c.name.toLowerCase() === description.toLowerCase());
-      if (strictMatch) {
-        categoryName = strictMatch.name;
-      } else {
-        // Text as category fallback
-        categoryName = description;
+    // Check for BULK PASTE (newline)
+    if (description.includes('\n')) {
+      // It's a bulk entry
+      const lines = description.split('\n').filter(l => l.trim());
+      // We'll pass the whole block and let App.tsx handle it if we modify App.tsx.
+      // OR we just iterate here if we had access to multiple slots. We don't.
+      // We must trust App.tsx to handle multiline string as bulk.
+      onSubmit(description, activeCategory?.name);
+    } else {
+      // ... existing logic
+      let categoryName = activeCategory ? activeCategory.name : undefined;
+
+      // If text matches a category name exactly, use it
+      if (!categoryName) {
+        const strictMatch = categories.find(c => c.name.toLowerCase() === description.toLowerCase());
+        if (strictMatch) {
+          categoryName = strictMatch.name;
+        } else {
+          categoryName = description; // Text as category fallback
+        }
       }
+
+      if (!description && activeCategory) {
+        description = activeCategory.name;
+      }
+
+      if (!description) return;
+
+      onSubmit(description, categoryName);
     }
-
-    if (!description && activeCategory) {
-      description = activeCategory.name;
-    }
-
-    if (!description) return;
-
-    onSubmit(description, categoryName);
 
     setText('');
     setActiveCategory(null);
     localStorage.removeItem('flowstate_draft');
     setShowColorPicker(false);
-    inputRef.current?.blur();
-    setIsFocused(false);
+    // Don't blur if we want auto-advance (Speed)?
+    // User requested "Auto-Advance: After hitting 'Enter' ... cursor jumps to next 15m slot".
+    // Does 'onSubmit' trigger slot change? Yes, in App.tsx calls `setManualSelectedTimestamp(null)`.
+    // We need to change that behavior.
+
+    // inputRef.current?.blur(); // REMOVED for Rapid Entry
+    // We want to keep focus! 
+    setIsFocused(true);
+    // Wait, if the slot changes, unique key of InputBar might not change, but props change.
+    // The `useEffect` [initialText, currentSlotLabel] will fire.
+    // And we added "INSTANT FOCUS LOGIC" there exactly for this!
   };
 
   const handleSuggestionClick = (suggestion: string) => {
@@ -220,26 +271,29 @@ export const InputBar: React.FC<Props> = ({
         </div>
       )}
 
-      {/* Color Picker (Manual override for text-based tags) */}
-      {showColorPicker && (
-        <div className="bg-white border-t border-gray-200 p-3 shadow-lg animate-in slide-in-from-bottom-2 flex gap-2 overflow-x-auto">
-          {PRESET_COLORS.map(c => (
+      {/* SIMPLIFIED COLOR SYSTEM: Always show presets when category is active? 
+          Or show presets differently?
+          User wants "Single click... on one of the 11 predefined colors".
+          Let's show a row of color dots if activeCategory is set.
+      */}
+      {activeCategory && (
+        <div className="absolute bottom-full left-0 w-full mb-2 flex flex-wrap gap-1 p-2 bg-white rounded-xl shadow-lg border border-gray-100 animate-in slide-in-from-bottom-2 z-20">
+          {PRESET_COLORS.map(color => (
             <button
-              key={c}
-              onClick={() => {
-                if (onUpdateCategoryColor && effectiveCatName) {
-                  onUpdateCategoryColor(effectiveCatName, c);
-                }
-              }}
-              className={`w-8 h-8 rounded-full border-2 shadow-sm hover:scale-110 transition-transform flex-shrink-0 ${effectiveColor === c ? 'border-gray-900 scale-110' : 'border-white'}`}
-              style={{ backgroundColor: c }}
+              key={color}
+              onClick={() => onUpdateCategoryColor && onUpdateCategoryColor(activeCategory.name, color)}
+              className={`w-6 h-6 rounded-full border-2 transition-transform hover:scale-110 ${activeCategory.color === color ? 'border-gray-900 scale-110' : 'border-transparent'}`}
+              style={{ backgroundColor: color }}
             />
           ))}
         </div>
       )}
 
       {/* Input Bar */}
-      <div className={`bg-white border-t border-gray-200 p-3 pb-6 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] transition-colors duration-300 ${shouldFocus ? 'bg-red-50 border-red-200' : ''}`}>
+      <div
+        className={`bg-white border-t border-gray-200 p-3 pb-6 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] transition-all duration-300 ${shouldFocus ? 'bg-red-50 border-red-200' : ''}`}
+        style={activeCategory ? { borderTopColor: activeCategory.color, backgroundColor: `${activeCategory.color}10` } : {}}
+      >
         <div className="max-w-md mx-auto relative flex items-center gap-2">
 
           <div className="absolute -top-10 left-0 bg-gray-900 text-white text-xs px-2 py-1 rounded shadow-md opacity-0 transition-opacity duration-200 data-[visible=true]:opacity-100 pointer-events-none" data-visible={isFocused}>
@@ -261,7 +315,16 @@ export const InputBar: React.FC<Props> = ({
             </button>
           )}
 
-          <div className="relative flex-1">
+          <div className="relative flex-1 flex items-center gap-2 bg-gray-100 border-2 border-transparent focus-within:bg-white focus-within:border-indigo-500 rounded-xl px-0 transition-all overflow-hidden"
+            style={activeCategory ? { borderColor: activeCategory.color, backgroundColor: 'white' } : {}}
+          >
+            {activeCategory && (
+              <div className="flex items-center gap-1 pl-3 pr-1 py-1 rounded-l-md select-none shrink-0 animate-in slide-in-from-left-2 fade-in duration-200" style={{ color: activeCategory.color }}>
+                <span className="text-xs font-bold uppercase tracking-wider">{activeCategory.name}</span>
+                <div className="w-1 h-4 bg-gray-200 rounded-full mx-1"></div>
+              </div>
+            )}
+
             <input
               ref={inputRef}
               type="text"
@@ -278,8 +341,8 @@ export const InputBar: React.FC<Props> = ({
                   setActiveCategory(null);
                 }
               }}
-              placeholder={isFocusedSlotFilled ? "Edit entry..." : (activeCategory ? `Add description for ${activeCategory.name}...` : "What did you do?")}
-              className="w-full pl-4 pr-10 py-3 bg-gray-100 border-2 border-transparent focus:bg-white focus:border-indigo-500 rounded-xl outline-none transition-all text-gray-800 placeholder-gray-400"
+              placeholder={isFocusedSlotFilled ? "Edit entry..." : (activeCategory ? `Add description...` : "What did you do?")}
+              className={`w-full py-3 bg-transparent outline-none transition-all text-gray-800 placeholder-gray-400 ${activeCategory ? 'pl-0' : 'pl-4'} pr-10`}
             />
             {text.length > 0 && (
               <button

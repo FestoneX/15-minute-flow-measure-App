@@ -57,19 +57,53 @@ export const db = {
   },
 
   getTags: (): string[] => {
-    // Legacy support: We might still want to track loose tags if needed, 
-    // but for now relying on categories + log descriptions is cleaner.
-    // Keeping this to not break existing calls.
     return getLocalStorage<string[]>(STORAGE_KEYS.TAGS, []);
   },
 
   addTag: (description: string): void => {
     if (!description) return;
-    // Simplified tag tracking (keep last 100 unique strings)
     const tags = new Set(db.getTags());
     tags.add(description);
     const sortedTags = Array.from(tags).slice(-100);
     setLocalStorage(STORAGE_KEYS.TAGS, sortedTags);
+  },
+
+  getWeightedSuggestions: (limit: number = 8): string[] => {
+    const logs = db.getLogs();
+    const now = Date.now();
+    const scores: Record<string, number> = {};
+
+    // 1. Calculate scores
+    logs.forEach(log => {
+      if (!log.description) return;
+      const desc = log.description.trim();
+      if (!desc) return;
+
+      const ageHours = (now - log.timestamp) / (1000 * 60 * 60);
+      let multiplier = 1.0;
+
+      if (ageHours <= 48) {
+        multiplier = 1.0;
+      } else if (ageHours <= 72) { // Day 3
+        multiplier = 0.8;
+      } else if (ageHours <= 168) { // Day 7
+        multiplier = 0.2;
+      } else if (ageHours <= 336) { // Day 14+
+        multiplier = 0.1;
+      } else if (ageHours > 4320) { // 6 Months
+        multiplier = 0.0;
+      } else {
+        multiplier = 0.1;
+      }
+
+      scores[desc] = (scores[desc] || 0) + (1 * multiplier);
+    });
+
+    // 2. Sort by score
+    return Object.entries(scores)
+      .sort(([, scoreA], [, scoreB]) => scoreB - scoreA)
+      .map(([desc]) => desc)
+      .slice(0, limit);
   },
 
   getSettings: (): AppSettings => {

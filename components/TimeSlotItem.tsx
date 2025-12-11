@@ -9,9 +9,10 @@ interface Props {
   onClick: (slot: TimeSlot) => void;
   isAlarmActive: boolean;
   categoryColors?: Record<string, string>;
+  isJustSaved?: boolean;
 }
 
-export const TimeSlotItem: React.FC<Props> = ({ slot, onClick, isAlarmActive, categoryColors = {} }) => {
+export const TimeSlotItem: React.FC<Props> = ({ slot, onClick, isAlarmActive, categoryColors = {}, isJustSaved = false }) => {
   const hasLog = !!slot.log;
 
   // Determine color
@@ -60,11 +61,21 @@ export const TimeSlotItem: React.FC<Props> = ({ slot, onClick, isAlarmActive, ca
     containerClass += "bg-white border-indigo-500 shadow-md ring-1 ring-indigo-500";
     textClass += "text-gray-400 italic";
     timeClass += " text-indigo-600 font-bold";
+  } else if (slot.isCurrent) {
+    // Current Empty Slot
+    containerClass += "bg-white border-indigo-500 shadow-md ring-1 ring-indigo-500";
+    textClass += "text-gray-400 italic";
+    timeClass += " text-indigo-600 font-bold";
   } else {
     // Past/Future Empty Slot
     containerClass += "bg-white border-gray-100 hover:border-gray-300";
     textClass += "text-gray-300 italic";
     timeClass += " text-gray-400";
+  }
+
+  // SAVE CONFIRMATION FLASH
+  if (isJustSaved) {
+    containerClass += " !bg-green-100 !border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.5)] transition-all duration-300 ";
   }
 
   return (

@@ -40,15 +40,22 @@ const App: React.FC = () => {
   const [showImport, setShowImport] = useState(false);
   const [importText, setImportText] = useState("");
 
+  const [justSavedId, setJustSavedId] = useState<string | null>(null);
+
   // Refs
   const scrollRef = useRef<HTMLDivElement>(null);
-  const audioRef = useRef<HTMLAudioElement>(new Audio('/alarm.mp3'));
+  const audioRef = useRef<HTMLAudioElement>(new Audio(settings.soundId || '/alarm.mp3'));
+
+  // Update audio source when settings change
+  useEffect(() => {
+    audioRef.current = new Audio(settings.soundId || '/alarm.mp3');
+  }, [settings.soundId]);
 
   // --- Effects ---
 
   const refreshData = () => {
     setLogs(db.getLogs());
-    setTags(db.getTags());
+    setTags(db.getWeightedSuggestions());
     setSettings(db.getSettings());
     setActivityDates(db.getActivityDates());
   };
@@ -133,6 +140,32 @@ const App: React.FC = () => {
   // --- Handlers ---
 
   const handleLogSubmit = (text: string, category?: string) => {
+    // Check for Bulk (Multiline)
+    if (text.includes('\n')) {
+      const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+      let currentTs = activeTimestamp;
+
+      lines.forEach(line => {
+        const newEntry: LogEntry = {
+          id: crypto.randomUUID(),
+          timestamp: currentTs,
+          description: line,
+          category: category // Apply same category to all? Or try to auto-detect? User didn't specify. Assuming same or text.
+        };
+        db.saveLog(newEntry);
+        // Increment 15m
+        currentTs += 15 * 60 * 1000;
+        // Flash last item in bulk?
+        if (lines.indexOf(line) === lines.length - 1) {
+          setJustSavedId(newEntry.id);
+          setTimeout(() => setJustSavedId(null), 2000);
+        }
+      });
+      refreshData();
+      setManualSelectedTimestamp(currentTs); // Advance to after the last bulk item
+      return;
+    }
+
     const finalCategory = category || text;
     const newEntry: LogEntry = {
       id: activeSlotLog ? activeSlotLog.id : crypto.randomUUID(),
@@ -144,10 +177,14 @@ const App: React.FC = () => {
     db.saveLog(newEntry);
     if (finalCategory) db.addTag(finalCategory);
 
+    setJustSavedId(newEntry.id);
+    setTimeout(() => setJustSavedId(null), 2000);
+
     refreshData();
-    setManualSelectedTimestamp(null);
+    // Auto-Advance: Move to next 15m slot instead of closing
+    setManualSelectedTimestamp(activeTimestamp + (15 * 60 * 1000));
     setAlarmActive(false);
-    setTriggerFlash(false); // Stop flash on interaction
+    setTriggerFlash(false);
   };
 
   const handleLogDelete = () => {
@@ -204,16 +241,25 @@ const App: React.FC = () => {
     </button>
   );
 
+  // --- Theme Logic ---
+  const currentHour = new Date().getHours();
+  let themeClass = "bg-gray-50"; // Day
+  if (currentHour >= 17 && currentHour < 20) {
+    themeClass = "bg-orange-50/50"; // Sunset
+  } else if (currentHour >= 20 || currentHour < 6) {
+    themeClass = "bg-slate-900 text-gray-100"; // Night
+  }
+
   return (
-    <div className={`flex flex-col h-screen bg-gray-50 text-gray-900 font-sans overflow-hidden ${shakeScreen ? 'animate-shake' : ''}`}>
+    <div className={`flex flex-col h-screen font-sans overflow-hidden transition-colors duration-1000 ${themeClass} ${shakeScreen ? 'animate-shake' : ''}`}>
 
       {/* Heartbeat Flash Overlay */}
       {triggerFlash && (
-        <div className="fixed inset-0 z-50 pointer-events-none bg-red-500 animate-heartbeat mix-blend-overlay"></div>
+        <div className="fixed inset-0 z-50 pointer-events-none bg-green-500/20 animate-pulse mix-blend-overlay"></div>
       )}
 
       {/* Header */}
-      <header className="bg-white border-b border-gray-200 px-4 py-3 sticky top-0 z-10 flex justify-between items-center shadow-sm">
+      <header className={`border-b px-4 py-3 sticky top-0 z-10 flex justify-between items-center shadow-sm transition-colors duration-1000 ${currentHour >= 20 || currentHour < 6 ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-gray-200 text-gray-900'}`}>
         <div className="flex items-center gap-2">
           <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold shadow-md transition-colors ${alarmActive ? 'bg-red-600 animate-pulse' : 'bg-indigo-600'}`}>F</div>
           <h1 className="font-bold text-lg tracking-tight hidden sm:block">FlowState</h1>
@@ -250,6 +296,7 @@ const App: React.FC = () => {
                     onClear={handleClearSlot}
                     isAlarmActive={alarmActive}
                     categoryColors={effectiveColors}
+                    isJustSaved={justSavedId === slot.log?.id}
                   />
                 </div>
               ))}
@@ -276,6 +323,27 @@ const App: React.FC = () => {
                     <div className="flex-1">
                       <label className="text-xs font-semibold text-gray-500">End Hour</label>
                       <input type="number" value={settings.endHour} onChange={e => updateSetting('endHour', +e.target.value)} className="w-full p-2 rounded border mt-1" />
+                      <label className="text-xs font-semibold text-gray-500">End Hour</label>
+                      <input type="number" value={settings.endHour} onChange={e => updateSetting('endHour', +e.target.value)} className="w-full p-2 rounded border mt-1" />
+                    </div>
+                  </div>
+
+                  <div className="mt-4">
+                    <label className="text-xs font-semibold text-gray-500 block mb-2">Notification Sound</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {['/alarm.mp3', '/chime.mp3', '/bell.mp3'].map((sound, idx) => (
+                        <button
+                          key={sound}
+                          onClick={() => {
+                            updateSetting('soundId', sound);
+                            const audio = new Audio(sound);
+                            audio.play().catch(() => { });
+                          }}
+                          className={`p-2 rounded border text-sm ${settings.soundId === sound ? 'bg-indigo-100 border-indigo-500 text-indigo-700 font-bold' : 'bg-white text-gray-600'}`}
+                        >
+                          {idx === 0 ? 'Alarm' : idx === 1 ? 'Chime' : 'Bell'}
+                        </button>
+                      ))}
                     </div>
                   </div>
                 </div>
