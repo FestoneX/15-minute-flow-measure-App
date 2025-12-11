@@ -42,6 +42,15 @@ const App: React.FC = () => {
 
   const [justSavedId, setJustSavedId] = useState<string | null>(null);
 
+  // THEME STATE
+  const [themeMode, setThemeMode] = useState<'light' | 'dark' | 'circadian'>(() => {
+    return (localStorage.getItem('flowstate_theme') as any) || 'light';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('flowstate_theme', themeMode);
+  }, [themeMode]);
+
   // Refs
   const scrollRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement>(new Audio(settings.soundId || '/alarm.mp3'));
@@ -243,15 +252,71 @@ const App: React.FC = () => {
 
   // --- Theme Logic ---
   const currentHour = new Date().getHours();
-  let themeClass = "bg-gray-50"; // Day
-  if (currentHour >= 17 && currentHour < 20) {
-    themeClass = "bg-orange-50/50"; // Sunset
-  } else if (currentHour >= 20 || currentHour < 6) {
-    themeClass = "bg-slate-900 text-gray-100"; // Night
+
+  let themeStyles = {};
+  let themeClass = "bg-gray-50 text-gray-900"; // Default Light
+
+  if (themeMode === 'dark') {
+    themeClass = "bg-slate-900 text-white dark-mode";
+  } else if (themeMode === 'circadian') {
+    // Circadian Logic
+    // Morning/Day: Pale Yellow #F2E96B -> Midday Blue #0077BE (06 - 15)
+    // Afternoon: Midday Blue #0077BE -> Bright Orange #F7941D (15 - 17)
+    // Sunset: Bright Orange #F7941D -> Red-Orange #E5452F (17 - 19)
+    // Twilight: Red-Orange #E5452F -> Deep Magenta #A6226B (19 - 21)
+    // Night: Deep Magenta #A6226B -> Midnight Black #0F1218 (21 - 06)
+
+    // We will use a gradient for smooth transitions? Or just dynamic background color?
+    // "map the background gradient/color... smooth CSS transitions"
+    // Let's use a background-image gradient or just background-color.
+    // Given the discrete hex codes and time ranges, let's map hours to specifically interpolated colors or just simpler block logic?
+    // User asked for "smooth CSS transitions between these states".
+    // Best way: Set a CSS variable for the background color and let `transition-colors` handle it.
+
+    let hex = "#F2E96B"; // Default Morning
+    let textHex = "#1F2937"; // Dark text for light backgrounds
+
+    if (currentHour >= 6 && currentHour < 15) {
+      // Morning -> Midday
+      hex = "#F2E96B";
+      if (currentHour > 11) hex = "#0077BE"; // Simplified jump or interpolation hard to do without heavy math
+      // Actually, the request implies specific "states".
+      // Let's simplified mapping:
+      if (currentHour < 12) hex = "#F2E96B"; // Morning
+      else hex = "#0077BE"; // Midday
+      if (hex === "#0077BE") textHex = "#FFFFFF";
+    }
+    else if (currentHour >= 15 && currentHour < 17) {
+      hex = "#0077BE"; // Start of afternoon
+      if (currentHour >= 16) hex = "#F7941D"; // Orange
+      textHex = "#FFFFFF";
+    }
+    else if (currentHour >= 17 && currentHour < 19) {
+      hex = "#E5452F"; // Red Orange
+      if (currentHour === 17) hex = "#F7941D";
+      textHex = "#FFFFFF";
+    }
+    else if (currentHour >= 19 && currentHour < 21) {
+      hex = "#A6226B"; // Deep Magenta
+      if (currentHour === 19) hex = "#E5452F";
+      textHex = "#FFFFFF";
+    }
+    else {
+      // Night (21 - 06)
+      hex = "#0F1218"; // Midnight Black
+      if (currentHour >= 21 && currentHour < 23) hex = "#A6226B"; // Early night
+      textHex = "#E0E0E0";
+    }
+
+    themeClass = `transition-colors duration-[2000ms]`;
+    themeStyles = { backgroundColor: hex, color: textHex };
   }
 
   return (
-    <div className={`flex flex-col h-screen font-sans overflow-hidden transition-colors duration-1000 ${themeClass} ${shakeScreen ? 'animate-shake' : ''}`}>
+    <div
+      className={`flex flex-col h-screen font-sans overflow-hidden ${themeClass} ${shakeScreen ? 'animate-shake' : ''}`}
+      style={themeStyles}
+    >
 
       {/* Heartbeat Flash Overlay */}
       {triggerFlash && (
@@ -259,7 +324,12 @@ const App: React.FC = () => {
       )}
 
       {/* Header */}
-      <header className={`border-b px-4 py-3 sticky top-0 z-10 flex justify-between items-center shadow-sm transition-colors duration-1000 ${currentHour >= 20 || currentHour < 6 ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-gray-200 text-gray-900'}`}>
+      <header className={`border-b px-4 py-3 sticky top-0 z-10 flex justify-between items-center shadow-sm transition-colors duration-1000 
+          ${themeMode === 'dark' ? 'bg-slate-800 border-slate-700 text-white' :
+          themeMode === 'circadian' ? 'bg-white/10 backdrop-blur-md border-white/20 text-inherit' :
+            'bg-white border-gray-200 text-gray-900'
+        }`}
+      >
         <div className="flex items-center gap-2">
           <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold shadow-md transition-colors ${alarmActive ? 'bg-red-600 animate-pulse' : 'bg-indigo-600'}`}>F</div>
           <h1 className="font-bold text-lg tracking-tight hidden sm:block">FlowState</h1>
@@ -315,6 +385,25 @@ const App: React.FC = () => {
               <SettingsHeader id="general" title="General Settings" icon={Settings} />
               {openSettingSection === 'general' && (
                 <div className="p-4 bg-gray-50 border-b border-gray-100 animate-in slide-in-from-top-2">
+
+                  {/* Theme Selector */}
+                  <div className="mb-4">
+                    <label className="text-xs font-semibold text-gray-500 block mb-2">Appearance</label>
+                    <div className="bg-white border rounded-xl overflow-hidden flex divide-x divide-gray-100">
+                      {(['light', 'dark', 'circadian'] as const).map(mode => (
+                        <button
+                          key={mode}
+                          onClick={() => setThemeMode(mode)}
+                          className={`flex-1 py-2 text-sm font-medium capitalize transition-colors
+                               ${themeMode === mode ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-gray-50 text-gray-600'}
+                            `}
+                        >
+                          {mode}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
                   <div className="flex gap-4">
                     <div className="flex-1">
                       <label className="text-xs font-semibold text-gray-500">Start Hour</label>
@@ -330,20 +419,27 @@ const App: React.FC = () => {
 
                   <div className="mt-4">
                     <label className="text-xs font-semibold text-gray-500 block mb-2">Notification Sound</label>
-                    <div className="grid grid-cols-3 gap-2">
-                      {['/alarm.mp3', '/chime.mp3', '/bell.mp3'].map((sound, idx) => (
-                        <button
-                          key={sound}
-                          onClick={() => {
-                            updateSetting('soundId', sound);
-                            const audio = new Audio(sound);
-                            audio.play().catch(() => { });
-                          }}
-                          className={`p-2 rounded border text-sm ${settings.soundId === sound ? 'bg-indigo-100 border-indigo-500 text-indigo-700 font-bold' : 'bg-white text-gray-600'}`}
-                        >
-                          {idx === 0 ? 'Alarm' : idx === 1 ? 'Chime' : 'Bell'}
-                        </button>
-                      ))}
+                    <div className="bg-white border rounded-xl overflow-hidden flex divide-x divide-gray-100">
+                      {['/alarm.mp3', '/chime.mp3', '/bell.mp3'].map((sound, idx) => {
+                        const label = idx === 0 ? 'Alarm' : idx === 1 ? 'Chime' : 'Bell';
+                        const isActive = settings.soundId === sound;
+                        return (
+                          <button
+                            key={sound}
+                            onClick={() => {
+                              updateSetting('soundId', sound);
+                              const audio = new Audio(sound);
+                              audio.play().catch(() => { });
+                            }}
+                            className={`flex-1 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2
+                               ${isActive ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-gray-50 text-gray-600'}
+                             `}
+                          >
+                            {isActive && <Volume2 size={14} className="animate-pulse" />}
+                            {label}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 </div>

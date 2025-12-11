@@ -17,12 +17,35 @@ export const StatsView: React.FC<Props> = ({ logs, currentDate, categoryColors =
   const [mode, setMode] = useState<'day' | 'week' | 'compare'>('day');
   const [expandedCat, setExpandedCat] = useState<string | null>(null);
 
+  // Navigation State
+  // Default to "Today" (passed as prop, generally) or just new Date()
+  const [viewDate, setViewDate] = useState<Date>(new Date());
+
   // Comparison State
-  const [compareDate, setCompareDate] = useState<Date>(() => {
-    const d = new Date(currentDate);
-    d.setDate(d.getDate() - 1); // Default to yesterday
+  const [baseDate, setBaseDate] = useState<Date>(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
     return d;
   });
+  const [targetDate, setTargetDate] = useState<Date>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1); // Default to yesterday
+    d.setHours(0, 0, 0, 0);
+    return d;
+  });
+
+  // Reset to "Today" on mount/default
+  // Actually, we want to allow the user to navigate BACK.
+  // The prop `currentDate` is from App.tsx, which has its own navigation.
+  // Requirement: "History View: Implement a Date Picker... to switch the main view to any specific past date."
+  // Note: App.tsx controls `currentDate` via day view navigation.
+  // Should we control `currentDate` in App.tsx? Or just local overrides for Stats?
+  // User Prompt: "switch the main view to any specific past date".
+  // Because StatsView is a child, changing the date here usually implies just viewing stats for that date.
+  // Let's use `viewDate` locally for StatsView so we don't disrupt the entry flow in App.tsx if they go back to Day view.
+  // BUT, if they switch back to Day View, they might expect to be on the same date?
+  // Let's keep it local to StatsView for safely viewing history without messing up logging context? 
+  // "switch the main view" -> ambiguous, but safer to implement local state for the Stats Dashboard first.
 
   const getStatsForRange = (rangeStart: Date, rangeEnd: Date) => {
     const filtered = logs.filter(log =>
@@ -74,19 +97,24 @@ export const StatsView: React.FC<Props> = ({ logs, currentDate, categoryColors =
   const primaryStats = useMemo(() => {
     let start, end;
     if (mode === 'week') {
-      start = startOfWeek(currentDate, { weekStartsOn: 1 });
-      end = endOfWeek(currentDate, { weekStartsOn: 1 });
+      start = startOfWeek(viewDate, { weekStartsOn: 1 });
+      end = endOfWeek(viewDate, { weekStartsOn: 1 });
     } else {
-      start = startOfDay(currentDate);
-      end = endOfDay(currentDate);
+      start = startOfDay(viewDate);
+      end = endOfDay(viewDate);
     }
     return getStatsForRange(start, end);
-  }, [logs, currentDate, mode, categoryColors, categories]);
+  }, [logs, viewDate, mode, categoryColors, categories]);
 
-  const comparisonStats = useMemo(() => {
+  const comparisonBaseStats = useMemo(() => {
     if (mode !== 'compare') return null;
-    return getStatsForRange(startOfDay(compareDate), endOfDay(compareDate));
-  }, [logs, compareDate, mode, categoryColors, categories]);
+    return getStatsForRange(startOfDay(baseDate), endOfDay(baseDate));
+  }, [logs, baseDate, mode, categoryColors, categories]);
+
+  const comparisonTargetStats = useMemo(() => {
+    if (mode !== 'compare') return null;
+    return getStatsForRange(startOfDay(targetDate), endOfDay(targetDate));
+  }, [logs, targetDate, mode, categoryColors, categories]);
 
   const formatDuration = (mins: number) => {
     const h = Math.floor(mins / 60);
@@ -95,10 +123,33 @@ export const StatsView: React.FC<Props> = ({ logs, currentDate, categoryColors =
     return `${m}m`;
   };
 
-  const StatCard = ({ title, stats, dateLabel }: any) => (
+  const StatCard = ({ title, stats, dateLabel, dateValue, onDateChange }: any) => (
     <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex-1">
       <h3 className="text-sm font-bold text-gray-500 mb-2 uppercase tracking-wider">{title}</h3>
-      <div className="text-xl font-bold text-indigo-900 mb-4">{dateLabel}</div>
+
+      {onDateChange ? (
+        <div className="mb-4">
+          <input
+            type="date"
+            value={dateValue ? dateValue.toISOString().split('T')[0] : ''}
+            onChange={(e) => {
+              if (e.target.value) {
+                const d = new Date(e.target.value);
+                d.setHours(0, 0, 0, 0);
+                // Fix UTC offset issue by using manual parse or safer method?
+                // Standard trick: 
+                const parts = e.target.value.split('-');
+                const local = new Date(+parts[0], +parts[1] - 1, +parts[2]);
+                onDateChange(local);
+              }
+            }}
+            className="text-lg font-bold text-indigo-900 border-b border-dashed border-gray-300 focus:border-indigo-500 outline-none bg-transparent w-full"
+          />
+        </div>
+      ) : (
+        <div className="text-xl font-bold text-indigo-900 mb-4">{dateLabel}</div>
+      )}
+
 
       {/* Pie Chart */}
       <div className="h-40 relative mb-4">
@@ -157,34 +208,52 @@ export const StatsView: React.FC<Props> = ({ logs, currentDate, categoryColors =
 
       {mode === 'compare' ? (
         <div className="flex flex-col md:flex-row gap-4">
-          {/* Primary Date (Controlled by Main App Navigation) */}
+          {/* Base Date */}
           <StatCard
-            title="Primary Date"
-            stats={primaryStats}
-            dateLabel={currentDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
+            title="Base Date (A)"
+            stats={comparisonBaseStats}
+            dateValue={baseDate}
+            onDateChange={setBaseDate}
           />
 
-          {/* Comparison Date (Locally Controlled) */}
-          <div className="flex-1 flex flex-col gap-2">
-            <div className="bg-white p-2 rounded-xl border border-gray-100 flex items-center justify-between shadow-sm">
-              <button onClick={() => { const d = new Date(compareDate); d.setDate(d.getDate() - 1); setCompareDate(d); }} className="p-1 hover:bg-gray-50 rounded"><ChevronDown className="rotate-90" /></button>
-              <span className="font-bold text-gray-700 text-sm">{compareDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span>
-              <button onClick={() => { const d = new Date(compareDate); d.setDate(d.getDate() + 1); setCompareDate(d); }} className="p-1 hover:bg-gray-50 rounded"><ChevronRight /></button>
-            </div>
-            <StatCard
-              title="Comparison Date"
-              stats={comparisonStats}
-              dateLabel={compareDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
-            />
-          </div>
+          {/* Target Date */}
+          <StatCard
+            title="Target Date (B)"
+            stats={comparisonTargetStats}
+            dateValue={targetDate}
+            onDateChange={setTargetDate}
+          />
         </div>
       ) : (
         // Standard Day/Week View
-        <StatCard
-          title={mode === 'week' ? 'Weekly Overview' : 'Daily Overview'}
-          stats={primaryStats}
-          dateLabel={mode === 'week' ? 'Current Week' : currentDate.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
-        />
+        <div>
+          {/* History Navigation for Day/Week View */}
+          <div className="flex items-center justify-center gap-4 mb-4">
+            <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate() - 1); setViewDate(d); }} className="p-2 hover:bg-white rounded-full"><ChevronDown className="rotate-90" /></button>
+            <div className="flex flex-col items-center">
+              <span className="text-sm font-bold text-gray-500 uppercase tracking-wide">{mode === 'week' ? 'Week Of' : 'Viewing'}</span>
+              <input
+                type="date"
+                value={viewDate.toISOString().split('T')[0]}
+                onChange={(e) => {
+                  if (e.target.value) {
+                    const parts = e.target.value.split('-');
+                    const local = new Date(+parts[0], +parts[1] - 1, +parts[2]);
+                    setViewDate(local);
+                  }
+                }}
+                className="text-xl font-bold text-gray-800 bg-transparent border-none outline-none text-center cursor-pointer hover:bg-black/5 rounded px-2 transition-colors"
+              />
+            </div>
+            <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate() + 1); setViewDate(d); }} className="p-2 hover:bg-white rounded-full"><ChevronRight /></button>
+          </div>
+
+          <StatCard
+            title={mode === 'week' ? 'Weekly Overview' : 'Daily Overview'}
+            stats={primaryStats}
+            dateLabel={mode === 'week' ? 'Current Week' : viewDate.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
+          />
+        </div>
       )}
     </div>
   );
