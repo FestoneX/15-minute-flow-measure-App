@@ -24,6 +24,10 @@ const App: React.FC = () => {
   const [newCatName, setNewCatName] = useState("");
   const [newCatColor, setNewCatColor] = useState("#3B82F6");
 
+  // Time Settings Edit State (local state for controlled editing)
+  const [editStartHour, setEditStartHour] = useState<string>(String(settings.startHour));
+  const [editEndHour, setEditEndHour] = useState<string>(String(settings.endHour));
+
   // Selection
   const [manualSelectedTimestamp, setManualSelectedTimestamp] = useState<number | null>(null);
 
@@ -267,6 +271,21 @@ const App: React.FC = () => {
     db.saveSettings(newSettings);
   };
 
+  // Handle hour input blur - validate and save
+  const handleHourBlur = (field: 'startHour' | 'endHour', value: string) => {
+    const num = parseInt(value, 10);
+    if (!isNaN(num) && num >= 0 && num <= 24) {
+      updateSetting(field, num);
+      // Sync local state with validated value
+      if (field === 'startHour') setEditStartHour(String(num));
+      else setEditEndHour(String(num));
+    } else {
+      // Revert to current setting if invalid
+      if (field === 'startHour') setEditStartHour(String(settings.startHour));
+      else setEditEndHour(String(settings.endHour));
+    }
+  };
+
   const SettingsHeader = ({ id, title, icon: Icon }: any) => (
     <button
       onClick={() => setOpenSettingSection(openSettingSection === id ? '' : id)}
@@ -284,13 +303,11 @@ const App: React.FC = () => {
     <button
       onClick={() => !disabled && onChange(!checked)}
       disabled={disabled}
-      className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors ${
-        checked ? 'bg-indigo-600' : 'bg-gray-300'
-      } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+      className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors ${checked ? 'bg-indigo-600' : 'bg-gray-300'
+        } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
     >
-      <span className={`inline-block h-6 w-6 transform rounded-full bg-white shadow-lg transition-transform ${
-        checked ? 'translate-x-7' : 'translate-x-1'
-      }`} />
+      <span className={`inline-block h-6 w-6 transform rounded-full bg-white shadow-lg transition-transform ${checked ? 'translate-x-7' : 'translate-x-1'
+        }`} />
     </button>
   );
 
@@ -522,11 +539,27 @@ const App: React.FC = () => {
                   <div className="flex gap-4">
                     <div className="flex-1">
                       <label className="text-xs font-semibold text-gray-500">Start Hour</label>
-                      <input type="number" value={settings.startHour} onChange={e => updateSetting('startHour', +e.target.value)} className="w-full p-2 rounded border mt-1" />
+                      <input
+                        type="number"
+                        value={editStartHour}
+                        onChange={e => setEditStartHour(e.target.value)}
+                        onBlur={e => handleHourBlur('startHour', e.target.value)}
+                        min={0}
+                        max={24}
+                        className="w-full p-2 rounded border mt-1"
+                      />
                     </div>
                     <div className="flex-1">
                       <label className="text-xs font-semibold text-gray-500">End Hour</label>
-                      <input type="number" value={settings.endHour} onChange={e => updateSetting('endHour', +e.target.value)} className="w-full p-2 rounded border mt-1" />
+                      <input
+                        type="number"
+                        value={editEndHour}
+                        onChange={e => setEditEndHour(e.target.value)}
+                        onBlur={e => handleHourBlur('endHour', e.target.value)}
+                        min={0}
+                        max={24}
+                        className="w-full p-2 rounded border mt-1"
+                      />
                     </div>
                   </div>
                 </div>
@@ -593,13 +626,13 @@ const App: React.FC = () => {
                         <button
                           key={color}
                           className="w-12 h-12 rounded-lg border-2 border-gray-200 hover:border-indigo-500 hover:scale-110 transition-all"
-                          style={{backgroundColor: color}}
+                          style={{ backgroundColor: color }}
                           aria-label={`Preset color ${color}`}
                         />
                       ))}
                       {(settings.customColors || []).map(color => (
                         <div key={color} className="relative group">
-                          <div className="w-12 h-12 rounded-lg border-2 border-gray-200" style={{backgroundColor: color}} />
+                          <div className="w-12 h-12 rounded-lg border-2 border-gray-200" style={{ backgroundColor: color }} />
                           <button
                             onClick={() => {
                               if (confirm('Remove this custom color? Existing categories will keep this color.')) {
