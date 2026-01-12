@@ -65,6 +65,15 @@ const App: React.FC = () => {
     localStorage.setItem('flowstate_theme', themeMode);
   }, [themeMode]);
 
+  // Apply dark mode class to document root for CSS variable support
+  useEffect(() => {
+    if (themeMode === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [themeMode]);
+
   // Refs
   const scrollRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement>(new Audio(settings.soundId || '/alarm.mp3'));

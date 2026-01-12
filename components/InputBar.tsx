@@ -6,7 +6,7 @@ interface Props {
   onSubmit: (text: string, category?: string) => void;
   onDelete?: () => void;
   recentTags: string[];
-  recentDescriptions?: Array<{description: string, category?: string, lastUsed: number}>;
+  recentDescriptions?: Array<{ description: string, category?: string, lastUsed: number }>;
   currentSlotLabel: string;
   isFocusedSlotFilled: boolean;
   initialText?: string;
