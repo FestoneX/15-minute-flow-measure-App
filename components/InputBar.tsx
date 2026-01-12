@@ -35,6 +35,7 @@ export const InputBar: React.FC<Props> = ({
   const [isFocused, setIsFocused] = useState(false);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+  const blurTimeoutRef = useRef<NodeJS.Timeout>();
 
   // Selection logic for Category Pills
   const [activeCategory, setActiveCategory] = useState<Category | null>(null);
@@ -48,6 +49,9 @@ export const InputBar: React.FC<Props> = ({
 
     // INSTANT FOCUS LOGIC: When slot label changes, focus immediately
     if (inputRef.current) {
+      // Cancel any pending blur timeout to prevent race condition
+      if (blurTimeoutRef.current) clearTimeout(blurTimeoutRef.current);
+      setIsFocused(true);
       inputRef.current.focus();
     }
   }, [initialText, currentSlotLabel]);
@@ -291,8 +295,13 @@ export const InputBar: React.FC<Props> = ({
               type="text"
               value={text}
               onChange={(e) => handleChange(e.target.value)}
-              onFocus={() => setIsFocused(true)}
-              onBlur={() => setTimeout(() => setIsFocused(false), 200)}
+              onFocus={() => {
+                if (blurTimeoutRef.current) clearTimeout(blurTimeoutRef.current);
+                setIsFocused(true);
+              }}
+              onBlur={() => {
+                blurTimeoutRef.current = setTimeout(() => setIsFocused(false), 200);
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') handleSubmit();
                 if (e.key === 'Escape') {

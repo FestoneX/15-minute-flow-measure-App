@@ -45,7 +45,7 @@ export const PRESET_CATEGORY_COLORS = [
 ];
 
 // Red Alarm GIF (served from public folder)
-export const RED_ALARM_GIF = "/red_alarm.gif";
+export const RED_ALARM_GIF = "/timer-loader.svg";
 
 export const DEFAULT_SETTINGS = {
   startHour: 5,
