@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { db } from './services/db';
 import { LogEntry, AppSettings, TimeSlot, Category } from './types';
-import { getDaySlots, getCurrentSlotTimestamp, formatTime, formatDateTitle, parseImportText, generateClipboardText, addDays, startOfDay, isSameDay } from './utils/timeUtils';
+import { getDaySlots, getCurrentSlotTimestamp, formatTime, formatDateTitle, parseImportText, generateClipboardText, addDays, startOfDay, isSameDay, getTimeUntilNextSlot, getTimeInCurrentSlot, formatTimer, format } from './utils/timeUtils';
+import { getCircadianColor, getContrastColor } from './utils/colorUtils';
 import { TimeSlotItem } from './components/TimeSlotItem';
 import { InputBar } from './components/InputBar';
 import { StatsView } from './components/StatsView';
-import { Settings, BarChart3, Bell, ChevronLeft, ChevronRight, PieChart, Download, Copy, Calendar, X, Volume2, Save, Upload, Trash2, Plus, ChevronDown, ChevronUp } from 'lucide-react';
+import { Settings, BarChart3, Bell, ChevronLeft, ChevronRight, PieChart, Download, Copy, Calendar, X, Volume2, VolumeX, Save, Upload, Trash2, Plus, ChevronDown, ChevronUp, RotateCw, FileText, AlertCircle } from 'lucide-react';
+import { PRESET_CATEGORY_COLORS, RED_ALARM_GIF } from './constants';
 
 const App: React.FC = () => {
   // --- State ---
@@ -16,7 +18,7 @@ const App: React.FC = () => {
   const [view, setView] = useState<'day' | 'stats' | 'settings'>('day');
 
   // Settings Accordion State
-  const [openSettingSection, setOpenSettingSection] = useState<string>('general');
+  const [openSettingSection, setOpenSettingSection] = useState<string>('time');
 
   // Category Management State
   const [newCatName, setNewCatName] = useState("");
@@ -32,9 +34,21 @@ const App: React.FC = () => {
   const [triggerFlash, setTriggerFlash] = useState(false);
   const [shakeScreen, setShakeScreen] = useState(false);
   const [alarmActive, setAlarmActive] = useState(false);
+  const [showAlarmGif, setShowAlarmGif] = useState(false);
 
   // Calendar Activity Indicators
   const [activityDates, setActivityDates] = useState<number[]>([]);
+
+  // Floating Controls & Timer
+  const [showRefreshButton, setShowRefreshButton] = useState(false);
+  const [currentTime, setCurrentTime] = useState(new Date());
+  const [timerSeconds, setTimerSeconds] = useState(0);
+
+  // Daily Notes
+  const [dailyNote, setDailyNote] = useState('');
+  const [noteCharCount, setNoteCharCount] = useState(0);
+  const [notesExpanded, setNotesExpanded] = useState(true);
+  const saveTimeoutRef = useRef<NodeJS.Timeout>();
 
   // Import Modal
   const [showImport, setShowImport] = useState(false);
@@ -90,6 +104,7 @@ const App: React.FC = () => {
 
         // Mute check
         if (settings.muteUntil && now.getTime() < settings.muteUntil) return;
+        if (settings.muteSound) return; // Global mute enabled
 
         // Check if previous slot is filled
         const ts = getCurrentSlotTimestamp();
@@ -98,7 +113,7 @@ const App: React.FC = () => {
 
         if (prevLog) return; // Already logged
 
-        // Play Audio Once
+        // Play Audio Once (only if not muted)
         try {
           audioRef.current.currentTime = 0;
           audioRef.current.play().catch(e => console.log("Autoplay blocked", e));
@@ -109,6 +124,10 @@ const App: React.FC = () => {
           setTriggerFlash(true);
           setTimeout(() => setTriggerFlash(false), 7000); // 7 seconds exact
         }
+
+        // Red Alarm GIF (5s)
+        setShowAlarmGif(true);
+        setTimeout(() => setShowAlarmGif(false), 5000);
 
         setAlarmActive(true);
         new Notification('FlowState: Log Check!', { body: 'Time to log!', icon: '/favicon.ico' });
@@ -185,6 +204,8 @@ const App: React.FC = () => {
 
     db.saveLog(newEntry);
     if (finalCategory) db.addTag(finalCategory);
+    db.updateLastActivity(); // Track activity for refresh button
+    setShowRefreshButton(false);
 
     setJustSavedId(newEntry.id);
     setTimeout(() => setJustSavedId(null), 2000);
@@ -250,67 +271,104 @@ const App: React.FC = () => {
     </button>
   );
 
+  const IOSToggle = ({ checked, onChange, disabled }: { checked: boolean, onChange: (val: boolean) => void, disabled?: boolean }) => (
+    <button
+      onClick={() => !disabled && onChange(!checked)}
+      disabled={disabled}
+      className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors ${
+        checked ? 'bg-indigo-600' : 'bg-gray-300'
+      } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+    >
+      <span className={`inline-block h-6 w-6 transform rounded-full bg-white shadow-lg transition-transform ${
+        checked ? 'translate-x-7' : 'translate-x-1'
+      }`} />
+    </button>
+  );
+
   // --- Theme Logic ---
   const currentHour = new Date().getHours();
 
   let themeStyles = {};
-  let themeClass = "bg-gray-50 text-gray-900"; // Default Light
+  let themeClass = "";
 
   if (themeMode === 'dark') {
-    themeClass = "bg-slate-900 text-white dark-mode";
+    const bgColor = '#22223B';
+    const textColor = getContrastColor(bgColor);
+    themeClass = "transition-colors duration-[120000ms]"; // 2-minute smooth transition
+    themeStyles = { backgroundColor: bgColor, color: textColor };
   } else if (themeMode === 'circadian') {
-    // Circadian Logic
-    // Morning/Day: Pale Yellow #F2E96B -> Midday Blue #0077BE (06 - 15)
-    // Afternoon: Midday Blue #0077BE -> Bright Orange #F7941D (15 - 17)
-    // Sunset: Bright Orange #F7941D -> Red-Orange #E5452F (17 - 19)
-    // Twilight: Red-Orange #E5452F -> Deep Magenta #A6226B (19 - 21)
-    // Night: Deep Magenta #A6226B -> Midnight Black #0F1218 (21 - 06)
-
-    // We will use a gradient for smooth transitions? Or just dynamic background color?
-    // "map the background gradient/color... smooth CSS transitions"
-    // Let's use a background-image gradient or just background-color.
-    // Given the discrete hex codes and time ranges, let's map hours to specifically interpolated colors or just simpler block logic?
-    // User asked for "smooth CSS transitions between these states".
-    // Best way: Set a CSS variable for the background color and let `transition-colors` handle it.
-
-    let hex = "#F2E96B"; // Default Morning
-    let textHex = "#1F2937"; // Dark text for light backgrounds
-
-    if (currentHour >= 6 && currentHour < 15) {
-      // Morning -> Midday
-      hex = "#F2E96B";
-      if (currentHour > 11) hex = "#0077BE"; // Simplified jump or interpolation hard to do without heavy math
-      // Actually, the request implies specific "states".
-      // Let's simplified mapping:
-      if (currentHour < 12) hex = "#F2E96B"; // Morning
-      else hex = "#0077BE"; // Midday
-      if (hex === "#0077BE") textHex = "#FFFFFF";
-    }
-    else if (currentHour >= 15 && currentHour < 17) {
-      hex = "#0077BE"; // Start of afternoon
-      if (currentHour >= 16) hex = "#F7941D"; // Orange
-      textHex = "#FFFFFF";
-    }
-    else if (currentHour >= 17 && currentHour < 19) {
-      hex = "#E5452F"; // Red Orange
-      if (currentHour === 17) hex = "#F7941D";
-      textHex = "#FFFFFF";
-    }
-    else if (currentHour >= 19 && currentHour < 21) {
-      hex = "#A6226B"; // Deep Magenta
-      if (currentHour === 19) hex = "#E5452F";
-      textHex = "#FFFFFF";
-    }
-    else {
-      // Night (21 - 06)
-      hex = "#0F1218"; // Midnight Black
-      if (currentHour >= 21 && currentHour < 23) hex = "#A6226B"; // Early night
-      textHex = "#E0E0E0";
-    }
-
-    themeClass = `transition-colors duration-[2000ms]`;
-    themeStyles = { backgroundColor: hex, color: textHex };
+    const bgColor = getCircadianColor(currentHour);
+    const textColor = getContrastColor(bgColor);
+    themeClass = "transition-colors duration-[120000ms]"; // 2-minute smooth transition
+    themeStyles = { backgroundColor: bgColor, color: textColor };
+  } else {
+    themeClass = "bg-gray-50 text-gray-900";
   }
+
+  // Update circadian colors every 30 seconds
+  useEffect(() => {
+    if (themeMode !== 'circadian') return;
+
+    const interval = setInterval(() => {
+      setRealTimeSlot(getCurrentSlotTimestamp()); // Force re-render
+    }, 30000); // 30 seconds
+
+    return () => clearInterval(interval);
+  }, [themeMode]);
+
+  // Timer update (every second)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentTime(new Date());
+      if (settings.timerStyle === 'countdown') {
+        setTimerSeconds(getTimeUntilNextSlot());
+      } else {
+        setTimerSeconds(getTimeInCurrentSlot());
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [settings.timerStyle]);
+
+  // Check for inactivity (every minute)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setShowRefreshButton(db.shouldShowRefreshButton());
+    }, 60000); // Check every minute
+    return () => clearInterval(interval);
+  }, []);
+
+  // Load daily note on date change
+  useEffect(() => {
+    const dateStr = format(currentDate, 'yyyy-MM-dd');
+    const note = db.getDailyNote(dateStr);
+    setDailyNote(note?.content || '');
+    setNoteCharCount(note?.content?.length || 0);
+  }, [currentDate]);
+
+  // Auto-save daily note with debounce
+  const handleNoteChange = (content: string) => {
+    if (content.length > 5000) return;
+
+    setDailyNote(content);
+    setNoteCharCount(content.length);
+
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+
+    saveTimeoutRef.current = setTimeout(() => {
+      const dateStr = format(currentDate, 'yyyy-MM-dd');
+      if (content.trim()) {
+        db.saveDailyNote({
+          date: dateStr,
+          content,
+          updatedAt: Date.now()
+        });
+      } else {
+        // Delete empty notes
+        db.deleteDailyNote(dateStr);
+      }
+    }, 300);
+  };
 
   return (
     <div
@@ -323,8 +381,20 @@ const App: React.FC = () => {
         <div className="fixed inset-0 z-50 pointer-events-none bg-green-500/20 animate-pulse mix-blend-overlay"></div>
       )}
 
+      {/* Red Alarm GIF Overlay */}
+      {showAlarmGif && (
+        <div
+          className="fixed top-20 left-1/2 -translate-x-1/2 z-[9999] cursor-pointer animate-in fade-in zoom-in duration-300"
+          onClick={() => setShowAlarmGif(false)}
+        >
+          <div className="relative bg-black/30 rounded-2xl p-4 backdrop-blur-sm shadow-2xl">
+            <img src={RED_ALARM_GIF} alt="Alarm" className="w-32 h-32 rounded-lg" />
+          </div>
+        </div>
+      )}
+
       {/* Header */}
-      <header className={`border-b px-4 py-3 sticky top-0 z-10 flex justify-between items-center shadow-sm transition-colors duration-1000 
+      <header className={`border-b px-4 py-3 sticky top-0 z-10 flex justify-between items-center shadow-sm transition-colors duration-[120000ms]
           ${themeMode === 'dark' ? 'bg-slate-800 border-slate-700 text-white' :
           themeMode === 'circadian' ? 'bg-white/10 backdrop-blur-md border-white/20 text-inherit' :
             'bg-white border-gray-200 text-gray-900'
@@ -334,6 +404,18 @@ const App: React.FC = () => {
           <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold shadow-md transition-colors ${alarmActive ? 'bg-red-600 animate-pulse' : 'bg-indigo-600'}`}>F</div>
           <h1 className="font-bold text-lg tracking-tight hidden sm:block">FlowState</h1>
         </div>
+
+        {/* Timer Display (centered) */}
+        {settings.showCurrentTime && (
+          <div className="absolute left-1/2 -translate-x-1/2 text-center">
+            <div className="text-sm font-mono font-semibold">
+              {format(currentTime, 'HH:mm')}
+            </div>
+            <div className="text-xs font-mono font-semibold">
+              {settings.timerStyle === 'countdown' ? '−' : '+'}{formatTimer(timerSeconds)}
+            </div>
+          </div>
+        )}
 
         <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-xl">
           <button onClick={() => setView('day')} className={`p-2 rounded-lg transition-all ${view === 'day' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500'}`}><BarChart3 size={20} className="rotate-90" /></button>
@@ -359,7 +441,11 @@ const App: React.FC = () => {
             </div>
             <div className="max-w-md mx-auto p-4 pt-2 space-y-1">
               {timeSlots.map(slot => (
-                <div key={slot.timestamp} className={manualSelectedTimestamp === slot.timestamp ? "ring-2 ring-indigo-400 rounded-xl" : ""}>
+                <div
+                  key={slot.timestamp}
+                  data-current={slot.isCurrent}
+                  className={manualSelectedTimestamp === slot.timestamp ? "ring-2 ring-indigo-400 rounded-xl" : ""}
+                >
                   <TimeSlotItem
                     slot={slot}
                     onClick={(s) => setManualSelectedTimestamp(s.timestamp)}
@@ -372,6 +458,45 @@ const App: React.FC = () => {
               ))}
               <div className="h-12"></div>
             </div>
+
+            {/* Daily Notes Section */}
+            {settings.dailyNotesEnabled && (
+              <div className="max-w-md mx-auto px-4 pb-4 mt-2">
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                  <button
+                    onClick={() => setNotesExpanded(!notesExpanded)}
+                    className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      <FileText size={20} className="text-indigo-600" />
+                      <span className="font-semibold text-gray-800">Daily Notes</span>
+                      {noteCharCount > 0 && (
+                        <span className="text-xs text-gray-500">({noteCharCount} chars)</span>
+                      )}
+                    </div>
+                    {notesExpanded ? <ChevronUp size={20} className="text-gray-400" /> : <ChevronDown size={20} className="text-gray-400" />}
+                  </button>
+
+                  {notesExpanded && (
+                    <div className="p-4 pt-0 animate-in slide-in-from-top-2 duration-200">
+                      <textarea
+                        value={dailyNote}
+                        onChange={(e) => handleNoteChange(e.target.value)}
+                        placeholder="Jot down thoughts about today..."
+                        className="w-full min-h-[120px] p-3 bg-gray-50 border border-gray-200 rounded-lg resize-y focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-gray-800"
+                        maxLength={5000}
+                      />
+                      {noteCharCount >= 4500 && (
+                        <div className="flex items-center gap-1 text-xs text-amber-600 mt-2">
+                          <AlertCircle size={14} />
+                          <span>{noteCharCount} / 5,000 characters</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </>
         )}
 
@@ -381,14 +506,31 @@ const App: React.FC = () => {
           <div className="max-w-md mx-auto p-4 space-y-4">
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
 
-              {/* General Settings */}
-              <SettingsHeader id="general" title="General Settings" icon={Settings} />
-              {openSettingSection === 'general' && (
+              {/* Time Settings */}
+              <SettingsHeader id="time" title="Time Settings" icon={Settings} />
+              {openSettingSection === 'time' && (
                 <div className="p-4 bg-gray-50 border-b border-gray-100 animate-in slide-in-from-top-2">
+                  <div className="flex gap-4">
+                    <div className="flex-1">
+                      <label className="text-xs font-semibold text-gray-500">Start Hour</label>
+                      <input type="number" value={settings.startHour} onChange={e => updateSetting('startHour', +e.target.value)} className="w-full p-2 rounded border mt-1" />
+                    </div>
+                    <div className="flex-1">
+                      <label className="text-xs font-semibold text-gray-500">End Hour</label>
+                      <input type="number" value={settings.endHour} onChange={e => updateSetting('endHour', +e.target.value)} className="w-full p-2 rounded border mt-1" />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Appearance */}
+              <SettingsHeader id="appearance" title="Appearance" icon={PieChart} />
+              {openSettingSection === 'appearance' && (
+                <div className="p-4 bg-gray-50 border-b border-gray-100 animate-in slide-in-from-top-2 space-y-4">
 
                   {/* Theme Selector */}
-                  <div className="mb-4">
-                    <label className="text-xs font-semibold text-gray-500 block mb-2">Appearance</label>
+                  <div>
+                    <label className="text-xs font-semibold text-gray-500 block mb-2">Theme</label>
                     <div className="bg-white border rounded-xl overflow-hidden flex divide-x divide-gray-100">
                       {(['light', 'dark', 'circadian'] as const).map(mode => (
                         <button
@@ -404,42 +546,27 @@ const App: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="flex gap-4">
-                    <div className="flex-1">
-                      <label className="text-xs font-semibold text-gray-500">Start Hour</label>
-                      <input type="number" value={settings.startHour} onChange={e => updateSetting('startHour', +e.target.value)} className="w-full p-2 rounded border mt-1" />
-                    </div>
-                    <div className="flex-1">
-                      <label className="text-xs font-semibold text-gray-500">End Hour</label>
-                      <input type="number" value={settings.endHour} onChange={e => updateSetting('endHour', +e.target.value)} className="w-full p-2 rounded border mt-1" />
-                      <label className="text-xs font-semibold text-gray-500">End Hour</label>
-                      <input type="number" value={settings.endHour} onChange={e => updateSetting('endHour', +e.target.value)} className="w-full p-2 rounded border mt-1" />
-                    </div>
+                  {/* Show Current Time Toggle */}
+                  <div className="flex justify-between items-center min-h-[44px]">
+                    <span className="font-medium text-gray-700">Show Current Time</span>
+                    <IOSToggle checked={settings.showCurrentTime} onChange={(val) => updateSetting('showCurrentTime', val)} />
                   </div>
 
-                  <div className="mt-4">
-                    <label className="text-xs font-semibold text-gray-500 block mb-2">Notification Sound</label>
+                  {/* Timer Style */}
+                  <div>
+                    <label className="text-xs font-semibold text-gray-500 block mb-2">Timer Style</label>
                     <div className="bg-white border rounded-xl overflow-hidden flex divide-x divide-gray-100">
-                      {['/alarm.mp3', '/chime.mp3', '/bell.mp3'].map((sound, idx) => {
-                        const label = idx === 0 ? 'Alarm' : idx === 1 ? 'Chime' : 'Bell';
-                        const isActive = settings.soundId === sound;
-                        return (
-                          <button
-                            key={sound}
-                            onClick={() => {
-                              updateSetting('soundId', sound);
-                              const audio = new Audio(sound);
-                              audio.play().catch(() => { });
-                            }}
-                            className={`flex-1 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2
-                               ${isActive ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-gray-50 text-gray-600'}
-                             `}
-                          >
-                            {isActive && <Volume2 size={14} className="animate-pulse" />}
-                            {label}
-                          </button>
-                        );
-                      })}
+                      {(['countdown', 'countup'] as const).map(style => (
+                        <button
+                          key={style}
+                          onClick={() => updateSetting('timerStyle', style)}
+                          className={`flex-1 py-2 text-sm font-medium capitalize transition-colors
+                               ${settings.timerStyle === style ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-gray-50 text-gray-600'}
+                            `}
+                        >
+                          {style === 'countdown' ? 'Countdown' : 'Count Up'}
+                        </button>
+                      ))}
                     </div>
                   </div>
                 </div>
@@ -449,6 +576,56 @@ const App: React.FC = () => {
               <SettingsHeader id="categories" title="Manage Categories" icon={PieChart} />
               {openSettingSection === 'categories' && (
                 <div className="p-4 bg-gray-50 border-b border-gray-100 animate-in slide-in-from-top-2">
+                  {/* Color Palette */}
+                  <div className="mb-6">
+                    <label className="text-xs font-semibold text-gray-500 block mb-3 uppercase tracking-wide">Color Palette</label>
+                    <div className="grid grid-cols-7 gap-2">
+                      {PRESET_CATEGORY_COLORS.map(color => (
+                        <button
+                          key={color}
+                          className="w-12 h-12 rounded-lg border-2 border-gray-200 hover:border-indigo-500 hover:scale-110 transition-all"
+                          style={{backgroundColor: color}}
+                          aria-label={`Preset color ${color}`}
+                        />
+                      ))}
+                      {(settings.customColors || []).map(color => (
+                        <div key={color} className="relative group">
+                          <div className="w-12 h-12 rounded-lg border-2 border-gray-200" style={{backgroundColor: color}} />
+                          <button
+                            onClick={() => {
+                              if (confirm('Remove this custom color? Existing categories will keep this color.')) {
+                                updateSetting('customColors', (settings.customColors || []).filter(c => c !== color));
+                              }
+                            }}
+                            className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity shadow-md"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+                      ))}
+                      <label className="w-12 h-12 rounded-lg border-2 border-dashed border-gray-300 hover:border-indigo-500 hover:scale-110 flex items-center justify-center cursor-pointer transition-all">
+                        <Plus size={20} className="text-gray-400" />
+                        <input
+                          type="color"
+                          className="hidden"
+                          onChange={(e) => {
+                            const newColor = e.target.value;
+                            const currentCustom = settings.customColors || [];
+                            if (currentCustom.length >= 10) {
+                              alert('Maximum 10 custom colors allowed');
+                              return;
+                            }
+                            if (!currentCustom.includes(newColor)) {
+                              updateSetting('customColors', [...currentCustom, newColor]);
+                            }
+                          }}
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Category List */}
+                  <label className="text-xs font-semibold text-gray-500 block mb-3 uppercase tracking-wide">Categories</label>
                   <div className="space-y-2 mb-4">
                     {settings.categories.map(cat => (
                       <div key={cat.id} className="flex items-center gap-2 bg-white p-2 rounded border border-gray-100">
@@ -488,22 +665,69 @@ const App: React.FC = () => {
               )}
 
               {/* Notifications */}
-              <SettingsHeader id="notifications" title="Notifications" icon={Bell} />
+              <SettingsHeader id="notifications" title="Notifications & Alerts" icon={Bell} />
               {openSettingSection === 'notifications' && (
                 <div className="p-4 bg-gray-50 border-b border-gray-100 animate-in slide-in-from-top-2 space-y-4">
-                  <div className="flex justify-between items-center">
-                    <span>Enable Sound</span>
-                    <input type="checkbox" checked={settings.notificationsEnabled} onChange={e => updateSetting('notificationsEnabled', e.target.checked)} className="toggle" />
+                  <div className="flex justify-between items-center min-h-[44px]">
+                    <span className="font-medium text-gray-700">Enable Sound</span>
+                    <IOSToggle checked={settings.notificationsEnabled} onChange={(val) => updateSetting('notificationsEnabled', val)} />
                   </div>
-                  <div className="flex justify-between items-center">
-                    <span>Visual Flash</span>
-                    <input type="checkbox" checked={settings.visualFlashEnabled} onChange={e => updateSetting('visualFlashEnabled', e.target.checked)} className="toggle" />
+                  <div className="flex justify-between items-center min-h-[44px]">
+                    <span className="font-medium text-gray-700">Mute Sound</span>
+                    <IOSToggle checked={settings.muteSound} onChange={(val) => updateSetting('muteSound', val)} />
                   </div>
+                  <div className="flex justify-between items-center min-h-[44px]">
+                    <span className="font-medium text-gray-700">Visual Flash</span>
+                    <IOSToggle checked={settings.visualFlashEnabled} onChange={(val) => updateSetting('visualFlashEnabled', val)} />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-semibold text-gray-500 block mb-2">Notification Sound</label>
+                    <div className="bg-white border rounded-xl overflow-hidden flex divide-x divide-gray-100">
+                      {['/alarm.mp3', '/chime.mp3', '/bell.mp3'].map((sound, idx) => {
+                        const label = idx === 0 ? 'Alarm' : idx === 1 ? 'Chime' : 'Bell';
+                        const isActive = settings.soundId === sound;
+                        return (
+                          <button
+                            key={sound}
+                            onClick={() => {
+                              updateSetting('soundId', sound);
+                              const audio = new Audio(sound);
+                              audio.play().catch(() => { });
+                            }}
+                            className={`flex-1 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2
+                               ${isActive ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-gray-50 text-gray-600'}
+                             `}
+                          >
+                            {isActive && <Volume2 size={14} className="animate-pulse" />}
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                   <button onClick={() => {
                     audioRef.current.play();
                     setTriggerFlash(true);
+                    setShowAlarmGif(true);
                     setTimeout(() => setTriggerFlash(false), 7000);
-                  }} className="w-full py-2 bg-indigo-100 text-indigo-700 rounded font-medium text-sm">Test Alarm (7s)</button>
+                    setTimeout(() => setShowAlarmGif(false), 5000);
+                  }} className="w-full py-3 bg-indigo-100 text-indigo-700 rounded-lg font-medium text-sm hover:bg-indigo-200 transition-colors">Test Alarm (7s)</button>
+                </div>
+              )}
+
+              {/* Daily Notes */}
+              <SettingsHeader id="dailynotes" title="Daily Notes" icon={FileText} />
+              {openSettingSection === 'dailynotes' && (
+                <div className="p-4 bg-gray-50 border-b border-gray-100 animate-in slide-in-from-top-2">
+                  <div className="flex justify-between items-center min-h-[44px]">
+                    <div>
+                      <span className="font-medium text-gray-700">Enable Daily Notes</span>
+                      <p className="text-xs text-gray-500 mt-1">Show notes section at bottom of day view</p>
+                    </div>
+                    <IOSToggle checked={settings.dailyNotesEnabled} onChange={(val) => updateSetting('dailyNotesEnabled', val)} />
+                  </div>
                 </div>
               )}
 
@@ -573,12 +797,49 @@ const App: React.FC = () => {
         </div>
       )}
 
+      {/* Floating Control Buttons */}
+      {view === 'day' && (
+        <>
+          {/* Refresh Button - Left */}
+          {showRefreshButton && (
+            <button
+              onClick={() => {
+                const currentSlot = document.querySelector('[data-current="true"]');
+                currentSlot?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                setManualSelectedTimestamp(null); // Focus current slot
+                setShowRefreshButton(false);
+              }}
+              className="fixed bottom-24 left-4 z-40 w-14 h-14 bg-indigo-600 text-white rounded-full shadow-lg hover:bg-indigo-700 hover:scale-110 transition-all flex items-center justify-center"
+              aria-label="Scroll to current time slot"
+            >
+              <RotateCw size={24} />
+            </button>
+          )}
+
+          {/* Mute Button - Right */}
+          <button
+            onClick={() => {
+              updateSetting('muteSound', !settings.muteSound);
+            }}
+            className="fixed bottom-24 right-4 z-40 w-14 h-14 bg-white border-2 border-gray-200 rounded-full shadow-lg hover:border-indigo-500 hover:scale-110 transition-all flex items-center justify-center"
+            aria-label={settings.muteSound ? 'Unmute' : 'Mute'}
+          >
+            {settings.muteSound ? (
+              <VolumeX size={24} className="text-gray-400" />
+            ) : (
+              <Volume2 size={24} className="text-indigo-600" />
+            )}
+          </button>
+        </>
+      )}
+
       {/* Input */}
       {view === 'day' && (
         <InputBar
           onSubmit={handleLogSubmit}
           onDelete={activeSlotLog ? handleLogDelete : undefined}
           recentTags={tags}
+          recentDescriptions={db.getAutocompleteCache()}
           currentSlotLabel={activeSlotLabel}
           isFocusedSlotFilled={!!activeSlotLog}
           initialText={activeSlotLog?.description ?? ''}
@@ -587,6 +848,7 @@ const App: React.FC = () => {
           categoryColors={settings.categoryColors}
           onUpdateCategoryColor={(cat, col) => updateSetting('categoryColors', { ...settings.categoryColors, [cat]: col })}
           onAutoTag={(text) => db.findLastCategoryForText(text)}
+          themeMode={themeMode}
         />
       )}
     </div>

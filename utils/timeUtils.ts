@@ -184,3 +184,36 @@ export const generateClipboardText = (logs: { timestamp: number, description: st
     return `${formatTime(l.timestamp)} ${l.description}`;
   }).join('\n');
 };
+
+// --- Timer Functions for Header Display ---
+
+// Get seconds until next 15-min slot
+export function getTimeUntilNextSlot(): number {
+  const now = new Date();
+  const minutes = now.getMinutes();
+  const seconds = now.getSeconds();
+
+  const minutesUntilNext = 15 - (minutes % 15);
+  const secondsUntilNext = minutesUntilNext * 60 - seconds;
+
+  return secondsUntilNext;
+}
+
+// Get seconds elapsed in current 15-min slot
+export function getTimeInCurrentSlot(): number {
+  const now = new Date();
+  const minutes = now.getMinutes();
+  const seconds = now.getSeconds();
+
+  const minutesInSlot = minutes % 15;
+  const secondsInSlot = minutesInSlot * 60 + seconds;
+
+  return secondsInSlot;
+}
+
+// Format seconds as MM:SS
+export function formatTimer(seconds: number): string {
+  const mins = Math.floor(Math.abs(seconds) / 60);
+  const secs = Math.abs(seconds) % 60;
+  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+}

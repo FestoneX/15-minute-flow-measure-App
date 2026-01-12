@@ -1,5 +1,5 @@
-import { LogEntry, AppSettings, Category } from '../types';
-import { STORAGE_KEYS, DEFAULT_SETTINGS as CONST_DEFAULT } from '../constants';
+import { LogEntry, AppSettings, Category, DailyNote } from '../types';
+import { STORAGE_KEYS, DEFAULT_SETTINGS as CONST_DEFAULT, NEW_STORAGE_KEYS } from '../constants';
 import { startOfDay } from '../utils/timeUtils';
 
 const DEFAULT_CATEGORIES: Category[] = [
@@ -109,7 +109,7 @@ export const db = {
   getSettings: (): AppSettings => {
     const saved = getLocalStorage<Partial<AppSettings>>(STORAGE_KEYS.SETTINGS, {});
 
-    // Merge with defaults
+    // Merge with defaults (including new UX enhancement fields)
     return {
       startHour: saved.startHour ?? CONST_DEFAULT.startHour,
       endHour: saved.endHour ?? CONST_DEFAULT.endHour,
@@ -118,7 +118,14 @@ export const db = {
       soundId: saved.soundId ?? CONST_DEFAULT.soundId,
       muteUntil: saved.muteUntil,
       categoryColors: saved.categoryColors ?? {},
-      categories: saved.categories && saved.categories.length > 0 ? saved.categories : DEFAULT_CATEGORIES
+      categories: saved.categories && saved.categories.length > 0 ? saved.categories : DEFAULT_CATEGORIES,
+
+      // New UX enhancement fields with defaults
+      timerStyle: saved.timerStyle ?? CONST_DEFAULT.timerStyle,
+      showCurrentTime: saved.showCurrentTime ?? CONST_DEFAULT.showCurrentTime,
+      muteSound: saved.muteSound ?? CONST_DEFAULT.muteSound,
+      dailyNotesEnabled: saved.dailyNotesEnabled ?? CONST_DEFAULT.dailyNotesEnabled,
+      customColors: saved.customColors ?? CONST_DEFAULT.customColors
     };
   },
 
@@ -180,5 +187,77 @@ export const db = {
       }
     }
     return undefined;
+  },
+
+  // --- Daily Notes CRUD ---
+  getDailyNotes: (): DailyNote[] => {
+    return getLocalStorage<DailyNote[]>(NEW_STORAGE_KEYS.DAILY_NOTES, []);
+  },
+
+  getDailyNote: (date: string): DailyNote | undefined => {
+    const notes = db.getDailyNotes();
+    return notes.find(n => n.date === date);
+  },
+
+  saveDailyNote: (note: DailyNote): void => {
+    const notes = db.getDailyNotes();
+    const index = notes.findIndex(n => n.date === note.date);
+
+    if (index >= 0) {
+      notes[index] = note;
+    } else {
+      notes.push(note);
+    }
+
+    setLocalStorage(NEW_STORAGE_KEYS.DAILY_NOTES, notes);
+  },
+
+  deleteDailyNote: (date: string): void => {
+    const notes = db.getDailyNotes().filter(n => n.date !== date);
+    setLocalStorage(NEW_STORAGE_KEYS.DAILY_NOTES, notes);
+  },
+
+  // --- Autocomplete Cache for Full Descriptions ---
+  getAutocompleteCache: (): Array<{description: string, category?: string, lastUsed: number}> => {
+    const logs = db.getLogs();
+    const map = new Map<string, {category?: string, lastUsed: number}>();
+
+    // Build map of descriptions to most recent category
+    logs.forEach(log => {
+      const existing = map.get(log.description);
+      if (!existing || log.timestamp > existing.lastUsed) {
+        map.set(log.description, {
+          category: log.category,
+          lastUsed: log.timestamp
+        });
+      }
+    });
+
+    // Convert to array and sort by recency
+    return Array.from(map.entries())
+      .map(([description, data]) => ({
+        description,
+        category: data.category,
+        lastUsed: data.lastUsed
+      }))
+      .sort((a, b) => b.lastUsed - a.lastUsed)
+      .slice(0, 100); // Keep top 100
+  },
+
+  // --- Activity Tracking for Refresh Button ---
+  updateLastActivity: (): void => {
+    setLocalStorage(NEW_STORAGE_KEYS.LAST_ACTIVITY, Date.now().toString());
+  },
+
+  shouldShowRefreshButton: (): boolean => {
+    try {
+      const lastActivity = localStorage.getItem(NEW_STORAGE_KEYS.LAST_ACTIVITY);
+      if (!lastActivity) return false;
+
+      const inactiveMinutes = (Date.now() - parseInt(lastActivity)) / 1000 / 60;
+      return inactiveMinutes >= 30;
+    } catch {
+      return false;
+    }
   }
 };

@@ -1,7 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { LogEntry, Category } from '../types';
 import { startOfDay, endOfDay, startOfWeek, endOfWeek, isWithinInterval } from '../utils/timeUtils';
-import { PieChart as PieIcon, CalendarDays, ChevronDown, ChevronRight, Clock } from 'lucide-react';
+import { PieChart as PieIcon, CalendarDays, ChevronDown, ChevronUp, ChevronRight, Clock } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 
 interface Props {
@@ -13,13 +13,37 @@ interface Props {
 
 const DEFAULT_COLORS = ['#4F46E5', '#10B981', '#F59E0B', '#EF4444', '#EC4899', '#8B5CF6', '#6366F1', '#14B8A6'];
 
+// Dynamic font sizing based on chart width
+const getCenterFontSize = (chartWidth: number) => {
+  if (chartWidth < 300) return 18;
+  if (chartWidth < 500) return 24;
+  return 32;
+};
+
 export const StatsView: React.FC<Props> = ({ logs, currentDate, categoryColors = {}, categories = [] }) => {
   const [mode, setMode] = useState<'day' | 'week' | 'compare'>('day');
   const [expandedCat, setExpandedCat] = useState<string | null>(null);
+  const [chartWidth, setChartWidth] = useState(400);
+  const chartContainerRef = useRef<HTMLDivElement>(null);
 
   // Navigation State
   // Default to "Today" (passed as prop, generally) or just new Date()
   const [viewDate, setViewDate] = useState<Date>(new Date());
+
+  // Measure chart width for responsive font sizing
+  useEffect(() => {
+    if (chartContainerRef.current) {
+      const updateWidth = () => {
+        if (chartContainerRef.current) {
+          setChartWidth(chartContainerRef.current.offsetWidth);
+        }
+      };
+
+      updateWidth();
+      window.addEventListener('resize', updateWidth);
+      return () => window.removeEventListener('resize', updateWidth);
+    }
+  }, []);
 
   // Comparison State
   const [baseDate, setBaseDate] = useState<Date>(() => {
@@ -152,7 +176,7 @@ export const StatsView: React.FC<Props> = ({ logs, currentDate, categoryColors =
 
 
       {/* Pie Chart */}
-      <div className="h-40 relative mb-4">
+      <div ref={chartContainerRef} className="h-40 relative mb-4">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie
@@ -161,6 +185,7 @@ export const StatsView: React.FC<Props> = ({ logs, currentDate, categoryColors =
               outerRadius={55}
               paddingAngle={4}
               dataKey="value"
+              isAnimationActive={false}
             >
               {stats.data.map((entry: any, index: number) => (
                 <Cell key={`cell-${index}`} fill={entry.color} strokeWidth={0} />
@@ -169,9 +194,17 @@ export const StatsView: React.FC<Props> = ({ logs, currentDate, categoryColors =
             <Tooltip formatter={(value: number) => formatDuration(value)} />
           </PieChart>
         </ResponsiveContainer>
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
           <div className="text-center">
-            <span className="text-xl font-bold text-gray-800">{formatDuration(stats.totalMinutes)}</span>
+            <div
+              className="font-bold text-gray-800 leading-tight"
+              style={{ fontSize: `${getCenterFontSize(chartWidth)}px` }}
+            >
+              {Math.floor(stats.totalMinutes / 60)}h {stats.totalMinutes % 60}m
+            </div>
+            <div className="text-xs text-gray-500 mt-1 uppercase tracking-wide">
+              total logged
+            </div>
           </div>
         </div>
       </div>
@@ -180,17 +213,47 @@ export const StatsView: React.FC<Props> = ({ logs, currentDate, categoryColors =
       <div className="space-y-3">
         {stats.data.length === 0 && <div className="text-center text-gray-400 italic py-4">No data</div>}
         {stats.data.map((cat: any) => (
-          <div key={cat.name}>
-            <div className="flex items-center justify-between text-sm mb-1">
+          <div key={cat.name} className="border border-gray-100 rounded-lg overflow-hidden">
+            {/* Category Header - Clickable */}
+            <button
+              onClick={() => setExpandedCat(expandedCat === cat.name ? null : cat.name)}
+              className="w-full flex items-center justify-between text-sm p-3 hover:bg-gray-50 transition-colors"
+            >
               <div className="flex items-center gap-2">
                 <div className="w-3 h-3 rounded-full" style={{ backgroundColor: cat.color }}></div>
                 <span className="font-medium text-gray-700">{cat.name}</span>
+                <span className="text-xs text-gray-500">({cat.percentage.toFixed(1)}%)</span>
               </div>
-              <span className="font-mono text-gray-500">{formatDuration(cat.value)}</span>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-gray-500">{formatDuration(cat.value)}</span>
+                {expandedCat === cat.name ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </div>
+            </button>
+
+            {/* Progress Bar */}
+            <div className="px-3 pb-2">
+              <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
+                <div className="h-full rounded-full" style={{ width: `${cat.percentage}%`, backgroundColor: cat.color }}></div>
+              </div>
             </div>
-            <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
-              <div className="h-full rounded-full" style={{ width: `${cat.percentage}%`, backgroundColor: cat.color }}></div>
-            </div>
+
+            {/* Expanded Task List */}
+            {expandedCat === cat.name && cat.tasks && cat.tasks.length > 0 && (
+              <div className="border-t border-gray-100 bg-gray-50 p-3 space-y-2">
+                {cat.tasks.map((task: any, idx: number) => {
+                  const taskPercentage = (task.mins / cat.value) * 100;
+                  return (
+                    <div key={idx} className="flex items-center justify-between text-xs bg-white p-2 rounded border border-gray-100">
+                      <div className="flex-1 truncate font-medium text-gray-700 mr-2">{task.desc}</div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-gray-500">{taskPercentage.toFixed(0)}%</span>
+                        <span className="font-mono text-gray-600">{formatDuration(task.mins)}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         ))}
       </div>

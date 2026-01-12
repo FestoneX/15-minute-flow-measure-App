@@ -4,6 +4,49 @@ export const STORAGE_KEYS = {
   SETTINGS: 'flowstate_settings',
 };
 
+// New storage keys for UX enhancements
+export const NEW_STORAGE_KEYS = {
+  DAILY_NOTES: 'flowstate_daily_notes',
+  MUTE_SOUND: 'flowstate_mute_sound',
+  LAST_ACTIVITY: 'flowstate_last_activity'
+};
+
+// Circadian Rhythm Color Palette
+export const CIRCADIAN_COLORS = {
+  SPACE_GREY: '#22223B',
+  MAUVE: '#4A4E69',
+  WARM_GREY: '#9A8C98',
+  DUSTY_ROSE: '#C9ADA7',
+  IVORY: '#F2E9E4'
+};
+
+// Time-based color mapping for circadian mode
+export const CIRCADIAN_TIME_MAP = [
+  { start: 0, end: 6, color: '#22223B' },    // Midnight
+  { start: 6, end: 10, from: '#4A4E69', to: '#9A8C98' }, // Morning transition
+  { start: 10, end: 14, color: '#9A8C98' },  // Midday
+  { start: 14, end: 17, color: '#C9ADA7' },  // Afternoon
+  { start: 17, end: 20, color: '#F2E9E4' },  // Evening
+  { start: 20, end: 24, from: '#F2E9E4', to: '#22223B' } // Night transition
+];
+
+// Preset Category Colors (10 colors for Settings color palette)
+export const PRESET_CATEGORY_COLORS = [
+  '#EF4444', // Red
+  '#F59E0B', // Amber
+  '#10B981', // Emerald
+  '#3B82F6', // Blue
+  '#6366F1', // Indigo
+  '#8B5CF6', // Violet
+  '#EC4899', // Pink
+  '#14B8A6', // Teal
+  '#84CC16', // Lime
+  '#F97316', // Orange
+];
+
+// Red Alarm GIF (served from public folder)
+export const RED_ALARM_GIF = "/red_alarm.gif";
+
 export const DEFAULT_SETTINGS = {
   startHour: 5,
   endHour: 24, // Midnight
@@ -11,6 +54,13 @@ export const DEFAULT_SETTINGS = {
   visualFlashEnabled: false,
   soundId: 'chime',
   categoryColors: {},
+
+  // New defaults for UX enhancements
+  timerStyle: 'countdown' as 'countdown' | 'countup',
+  showCurrentTime: false,
+  muteSound: false,
+  dailyNotesEnabled: false,
+  customColors: [] as string[]
 };
 
 export const THEME = {

@@ -48,7 +48,7 @@ export const TimeSlotItem: React.FC<Props> = ({ slot, onClick, isAlarmActive, ca
 
       // Time color should also match or contrast
       const isTextWhite = textColor === '#ffffff';
-      timeClass += isTextWhite ? "text-white/70" : "text-black/60";
+      timeClass += isTextWhite ? " text-white" : " text-black";
 
     } else {
       // Default filled slot (no color assigned)
